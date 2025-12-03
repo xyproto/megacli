@@ -78,47 +78,47 @@ func (s *State) drawError(text string) {
 	}
 }
 
-func (s *State) ls(dir string) {
+func (s *State) ls(dir string) error {
 	const margin = 1
 	longestSoFar := uint(0)
 	entries, err := os.ReadDir(dir)
-	if err == nil { // success
-		x := s.startx
-		y := s.starty + 1
-		//vt.SetXY(x, y)
-		for _, e := range entries {
-			name := e.Name()
-			if ulen(name) > longestSoFar {
-				longestSoFar = ulen(name)
-			}
-			path := filepath.Join(dir, name)
-			if isdir(path) {
-				s.c.Write(x, y, vt.Blue, vt.BackgroundDefault, name)
-				s.c.Write(x+ulen(name), y, vt.White, vt.BackgroundDefault, "/")
-			} else if isexec(path) {
-				s.c.Write(x, y, vt.LightGreen, vt.BackgroundDefault, name)
-				s.c.Write(x+ulen(name), y, vt.White, vt.BackgroundDefault, "*")
-			} else if files.IsSymlink(path) {
-				s.c.Write(x, y, vt.LightRed, vt.BackgroundDefault, name)
-				s.c.Write(x+ulen(name), y, vt.White, vt.BackgroundDefault, "^")
-			} else if files.IsBinary(path) {
-				s.c.Write(x, y, vt.LightMagenta, vt.BackgroundDefault, name)
-				s.c.Write(x+ulen(name), y, vt.White, vt.BackgroundDefault, "¤")
-			} else {
-				s.c.Write(x, y, vt.Default, vt.BackgroundDefault, name)
-			}
-			y++
-			if y >= s.c.H() {
-				x += longestSoFar + margin
-				y = s.starty + 1
-			}
-			if x+longestSoFar > s.c.W() {
-				break
-			}
-		}
-	} else {
-		fmt.Fprintln(os.Stderr, "Could not list "+dir)
+	if err != nil {
+		return err
 	}
+	x := s.startx
+	y := s.starty + 1
+	//vt.SetXY(x, y)
+	for _, e := range entries {
+		name := e.Name()
+		if ulen(name) > longestSoFar {
+			longestSoFar = ulen(name)
+		}
+		path := filepath.Join(dir, name)
+		if isdir(path) {
+			s.c.Write(x, y, vt.Blue, vt.BackgroundDefault, name)
+			s.c.Write(x+ulen(name), y, vt.White, vt.BackgroundDefault, "/")
+		} else if isexec(path) {
+			s.c.Write(x, y, vt.LightGreen, vt.BackgroundDefault, name)
+			s.c.Write(x+ulen(name), y, vt.White, vt.BackgroundDefault, "*")
+		} else if files.IsSymlink(path) {
+			s.c.Write(x, y, vt.LightRed, vt.BackgroundDefault, name)
+			s.c.Write(x+ulen(name), y, vt.White, vt.BackgroundDefault, "^")
+		} else if files.IsBinary(path) {
+			s.c.Write(x, y, vt.LightMagenta, vt.BackgroundDefault, name)
+			s.c.Write(x+ulen(name), y, vt.White, vt.BackgroundDefault, "¤")
+		} else {
+			s.c.Write(x, y, vt.Default, vt.BackgroundDefault, name)
+		}
+		y++
+		if y >= s.c.H() {
+			x += longestSoFar + margin
+			y = s.starty + 1
+		}
+		if x+longestSoFar > s.c.W() {
+			break
+		}
+	}
+	return nil
 }
 
 func isdir(path string) bool {
@@ -253,17 +253,8 @@ func (s *State) execute(cmd, path string) (bool, error) {
 		}
 		return false, err
 	}
-	if cmd == "l" || cmd == "ls" || cmd == "dir" || strings.HasPrefix(cmd, "l ") {
-		rest := ""
-		if len(cmd) > 2 {
-			rest = cmd[2:]
-		}
-		if rest == "" {
-			s.ls(path)
-		} else {
-			s.ls(rest)
-		}
-		return false, nil
+	if cmd == "l" || cmd == "ls" || cmd == "dir" {
+		return false, s.ls(path)
 	}
 	if cmd == "cd" || cmd == "-" || strings.HasPrefix(cmd, "cd ") {
 		possibleDirectory := ""
