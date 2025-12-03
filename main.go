@@ -27,7 +27,6 @@ type State struct {
 	starty       uint
 	promptLength uint
 	written      []rune
-	bashMode     bool
 	prevdir      []string
 }
 
@@ -254,13 +253,6 @@ func (s *State) execute(cmd, path string) (bool, error) {
 	if isfile(cmd) { // abs absolute path
 		return false, s.edit(cmd, path)
 	}
-	if s.bashMode { // only for bash mode
-		output, err := shellRun(cmd, s.dir[s.dirIndex])
-		if err == nil {
-			s.drawOutput(output)
-		}
-		return false, err
-	}
 	if cmd == "l" || cmd == "ls" || cmd == "dir" {
 		return false, s.ls(path)
 	}
@@ -375,29 +367,21 @@ func main() {
 			quit:     false,
 			startx:   uint(5),
 			starty:   uint(6),
-			bashMode: false,
 		}
 	)
 
 	drawPrompt := func() {
 		prompt := ""
-		if !s.bashMode {
-			if absPath, err := filepath.Abs(s.dir[s.dirIndex]); err == nil { // success
-				prompt = absPath //+ "> "
-			} else {
-				prompt = s.dir[s.dirIndex] //+ "> "
-			}
-			prompt = strings.Replace(prompt, env.HomeDir(), "~", 1)
+		if absPath, err := filepath.Abs(s.dir[s.dirIndex]); err == nil { // success
+			prompt = absPath //+ "> "
+		} else {
+			prompt = s.dir[s.dirIndex] //+ "> "
 		}
+		prompt = strings.Replace(prompt, env.HomeDir(), "~", 1)
 		c.Write(s.startx, s.starty, promptColor, vt.BackgroundDefault, prompt)
 		s.promptLength = ulen([]rune(prompt)) + 2 // +2 for > and " "
-		if !s.bashMode {
-			c.WriteRune(s.startx+s.promptLength-2, s.starty, angleColor, vt.BackgroundDefault, '>')
-			c.WriteRune(s.startx+s.promptLength-1, s.starty, vt.Default, vt.BackgroundDefault, ' ')
-		} else {
-			c.WriteRune(s.startx+s.promptLength-2, s.starty, bashDollarColor, vt.BackgroundDefault, '$')
-			c.WriteRune(s.startx+s.promptLength-1, s.starty, vt.Default, vt.BackgroundDefault, ' ')
-		}
+		c.WriteRune(s.startx+s.promptLength-2, s.starty, angleColor, vt.BackgroundDefault, '>')
+		c.WriteRune(s.startx+s.promptLength-1, s.starty, vt.Default, vt.BackgroundDefault, ' ')
 	}
 
 	// The rune index for the text that has been written
