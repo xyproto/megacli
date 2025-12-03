@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,22 +17,22 @@ import (
 )
 
 type State struct {
-	c             *vt.Canvas
-	dir1          string
-	dir2          string
-	dir3          string
-	quit          bool
-	startx        uint
-	starty        uint
-	prompt_length uint
-	written       []rune
-	bashMode      bool
+	c            *vt.Canvas
+	dir          []string
+	dirIndex     uint
+	quit         bool
+	startx       uint
+	starty       uint
+	promptLength uint
+	written      []rune
+	bashMode     bool
+	prevdir      []string
 }
 
 const (
-	start_message  = "---=[ MegaCLI ]=---"
-	ctrl_c_message = "bye (ctrl-c pressed)"
-	exit_message   = "bye"
+	startMessage = "---=[ MegaCLI ]=---"
+	ctrlcMessage = "bye (ctrl-c)"
+	exitMessage  = "bye"
 
 	leftArrow  = "←"
 	rightArrow = "→"
@@ -42,9 +43,14 @@ const (
 	pgDnKey = "⇟" // page down
 	homeKey = "⇱" // home
 	endKey  = "⇲" // end
+
+	bashDollarColor = vt.LightRed
+	angleColor      = vt.LightRed
+	promptColor     = vt.LightGreen
+	headerColor     = vt.LightMagenta
 )
 
-func ulen[T string | []rune | []int | []uint](xs T) uint {
+func ulen[T string | []rune | []string](xs T) uint {
 	return uint(len(xs))
 }
 
@@ -92,17 +98,20 @@ func (s *State) ls(dir string) {
 				s.c.Write(x+ulen(name), y, vt.White, vt.BackgroundDefault, "*")
 			} else if files.IsSymlink(path) {
 				s.c.Write(x, y, vt.LightRed, vt.BackgroundDefault, name)
-				s.c.Write(x+ulen(name), y, vt.White, vt.BackgroundDefault, ">")
+				s.c.Write(x+ulen(name), y, vt.White, vt.BackgroundDefault, "^")
 			} else if files.IsBinary(path) {
 				s.c.Write(x, y, vt.LightMagenta, vt.BackgroundDefault, name)
-				s.c.Write(x+ulen(name), y, vt.White, vt.BackgroundDefault, "b")
+				s.c.Write(x+ulen(name), y, vt.White, vt.BackgroundDefault, "¤")
 			} else {
 				s.c.Write(x, y, vt.Default, vt.BackgroundDefault, name)
 			}
 			y++
 			if y >= s.c.H() {
 				x += longestSoFar + margin
-				y = s.starty
+				y = s.starty + 1
+			}
+			if x+longestSoFar > s.c.W() {
+				break
 			}
 		}
 	} else {
@@ -141,23 +150,27 @@ func (s *State) edit(filename, path string) error {
 	return command.Run()
 }
 
-func run(executableName, path string) error {
+func run(executableName string, args []string, path string) error {
 	executablePath, err := exec.LookPath(executableName)
 	if err != nil {
 		return err
 	}
-	command := exec.Command(executablePath)
+	command := exec.Command(executablePath, args...)
 	command.Dir = path
+	command.Env = env.Environ()
 	command.Stdout = os.Stdout
 	command.Stderr = os.Stderr
 	command.Stdin = os.Stdin
 	return command.Run()
 }
 
-func shellRun(shellCommand, path string) (string, error) {
-	command := exec.Command("bash", "-c", shellCommand)
+func run2(executableName string, args []string, path string) (string, error) {
+	command := exec.Command(executableName, args...)
 	command.Dir = path
 	command.Env = env.Environ()
+	//command.Stdout = os.Stdout
+	//command.Stderr = os.Stderr
+	//command.Stdin = os.Stdin
 	outBytes, err := command.CombinedOutput()
 	if err != nil {
 		return "", err
@@ -165,51 +178,139 @@ func shellRun(shellCommand, path string) (string, error) {
 	return string(outBytes), nil
 }
 
-func (s *State) execute(cmd, path string) (changedDirectory bool) {
+func shellRun(shellCommand, path string) (string, error) {
+	shellExecutable := files.WhichCached(env.Str("SHELL"))
+	if shellExecutable == "" {
+		shellExecutable = "bash"
+	}
+	args := []string{"-c", shellCommand}
+	switch filepath.Base(shellExecutable) {
+	case "bash", "zsh":
+		//args = []string{"--globalrcs", "--rcs", "-c", shellCommand}
+		//args = []string{"-i", "-c", shellCommand}
+		//args = []string{"-i", "-c", "--", shellCommand + ";exit"}
+		args = []string{"-i", "-c", shellCommand + ";exit"}
+	}
+	command := exec.Command(shellExecutable, args...)
+	command.Dir = path
+	command.Env = env.Environ()
+	//command.Stdout = os.Stdout
+	//command.Stderr = os.Stderr
+	command.Stdin = os.Stdin
+	outBytes, err := command.CombinedOutput()
+	if err != nil {
+		return "", err
+	}
+	return string(outBytes), nil
+}
+
+func (s *State) setPath(path string) {
+	absPath, err := filepath.Abs(path)
+	if err == nil { // success
+		s.prevdir[s.dirIndex] = s.dir[s.dirIndex]
+		s.dir[s.dirIndex] = absPath
+	} else {
+		s.prevdir[s.dirIndex] = s.dir[s.dirIndex]
+		s.dir[s.dirIndex] = path
+	}
+}
+
+// execute tries to execute the given command in the given directory,
+// and returns true if the directory was changed and an error if something failed
+func (s *State) execute(cmd, path string) (bool, error) {
 	// Common for non-bash and bash mode
 	if cmd == "exit" || cmd == "quit" || cmd == "q" {
 		s.quit = true
-	} else if isdir(filepath.Join(path, cmd)) { // relative path
+		return false, nil
+	}
+	if isdir(filepath.Join(path, cmd)) { // relative path
 		newPath := filepath.Join(path, cmd)
-		if s.dir1 != newPath {
-			s.dir1 = newPath
-			changedDirectory = true
+		if s.dir[s.dirIndex] != newPath {
+			s.setPath(newPath)
+			return true, nil
 		}
-	} else if isdir(cmd) { // absolute path
-		if s.dir1 != cmd {
-			s.dir1 = cmd
-			changedDirectory = true
+		return false, nil
+	}
+	if isdir(cmd) { // absolute path
+		if s.dir[s.dirIndex] != cmd {
+			s.setPath(cmd)
+			return true, nil
 		}
-	} else if isfile(filepath.Join(path, cmd)) { // relative path
-		s.edit(cmd, path)
-	} else if isfile(cmd) { // abs absolute path
-		s.edit(cmd, path)
-	} else {
-		if s.bashMode { // only for bash mode
-			if output, err := shellRun(cmd, s.dir1); err != nil {
-				s.drawError(err.Error())
-			} else {
-				s.drawOutput(output)
+		return false, nil
+	}
+	if isfile(filepath.Join(path, cmd)) { // relative path
+		return false, s.edit(cmd, path)
+	}
+	if isfile(cmd) { // abs absolute path
+		return false, s.edit(cmd, path)
+	}
+	if s.bashMode { // only for bash mode
+		output, err := shellRun(cmd, s.dir[s.dirIndex])
+		if err == nil {
+			s.drawOutput(output)
+		}
+		return false, err
+	}
+	if cmd == "l" || cmd == "ls" || cmd == "dir" || strings.HasPrefix(cmd, "l ") {
+		rest := ""
+		if len(cmd) > 2 {
+			rest = cmd[2:]
+		}
+		if rest == "" {
+			s.ls(path)
+		} else {
+			s.ls(rest)
+		}
+		return false, nil
+	}
+	if cmd == "cd" || cmd == "-" || strings.HasPrefix(cmd, "cd ") {
+		possibleDirectory := ""
+		rest := ""
+		if len(cmd) > 3 {
+			rest = strings.TrimSpace(cmd[3:])
+			possibleDirectory = filepath.Join(s.dir[s.dirIndex], rest)
+		}
+		if possibleDirectory == "" && cmd != "-" {
+			homedir := env.HomeDir()
+			if s.dir[s.dirIndex] != homedir {
+				s.setPath(homedir)
+				return true, nil
 			}
-		} else { // only for non-bash mode
-			if cmd == "l" || cmd == "ls" || strings.HasPrefix(cmd, "l ") {
-				rest := ""
-				if len(cmd) > 2 {
-					rest = cmd[2:]
-				}
-				if rest != "" {
-					s.ls(rest)
-				} else {
-					s.ls(path)
-				}
-			} else if foundExecutableInPath := files.WhichCached(cmd); foundExecutableInPath != "" {
-				run(foundExecutableInPath, s.dir1)
-			} else {
-				s.drawError("?")
+			return false, nil
+		} else if isdir(possibleDirectory) {
+			if s.dir[s.dirIndex] != possibleDirectory {
+				s.setPath(possibleDirectory)
+				return true, nil
 			}
+			return false, nil
+		} else if isdir(rest) {
+			if s.dir[s.dirIndex] != rest {
+				s.setPath(rest)
+				return true, nil
+			}
+			return false, nil
+		} else if cmd == "-" || rest == "-" {
+			if s.dir[s.dirIndex] != s.prevdir[s.dirIndex] {
+				s.prevdir[s.dirIndex], s.dir[s.dirIndex] = s.dir[s.dirIndex], s.prevdir[s.dirIndex]
+				return true, nil
+			}
+			return false, nil
+		} else {
+			return false, errors.New("cd what")
 		}
 	}
-	return
+	if strings.Contains(cmd, " ") {
+		fields := strings.Fields(cmd)
+		output, err := run2(fields[0], strings.Split(fields[1], " "), s.dir[s.dirIndex])
+		if err == nil {
+			s.drawOutput(output)
+		}
+		return false, err
+	} else if foundExecutableInPath := files.WhichCached(cmd); foundExecutableInPath != "" {
+		return false, run(foundExecutableInPath, []string{}, s.dir[s.dirIndex])
+	}
+
+	return false, errors.New("?")
 }
 
 func main() {
@@ -233,7 +334,7 @@ func main() {
 	go func() {
 		<-ch
 		cleanupFunc()
-		fmt.Fprintln(os.Stderr, ctrl_c_message)
+		fmt.Fprintln(os.Stderr, ctrlcMessage)
 		os.Exit(1)
 	}()
 
@@ -250,9 +351,9 @@ func main() {
 		x, y uint
 		s    = &State{
 			c:        c,
-			dir1:     ".",
-			dir2:     env.HomeDir(),
-			dir3:     "/tmp",
+			dir:      []string{".", env.HomeDir(), "/tmp"},
+			prevdir:  []string{".", env.HomeDir(), "/tmp"},
+			dirIndex: 0,
 			quit:     false,
 			startx:   uint(5),
 			starty:   uint(6),
@@ -260,54 +361,77 @@ func main() {
 		}
 	)
 
-	draw_prompt := func() {
-		prompt := "$ "
+	drawPrompt := func() {
+		prompt := ""
 		if !s.bashMode {
-			if absPath, err := filepath.Abs(s.dir1); err == nil { // success
-				prompt = absPath + "> "
+			if absPath, err := filepath.Abs(s.dir[s.dirIndex]); err == nil { // success
+				prompt = absPath //+ "> "
 			} else {
-				prompt = s.dir1 + "> "
+				prompt = s.dir[s.dirIndex] //+ "> "
 			}
+			prompt = strings.Replace(prompt, env.HomeDir(), "~", 1)
 		}
-		c.Write(s.startx, s.starty, vt.LightGreen, vt.BackgroundDefault, prompt)
-		s.prompt_length = ulen(prompt)
+		c.Write(s.startx, s.starty, promptColor, vt.BackgroundDefault, prompt)
+		s.promptLength = ulen([]rune(prompt)) + 2 // +2 for > and " "
+		if !s.bashMode {
+			c.WriteRune(s.startx+s.promptLength-2, s.starty, angleColor, vt.BackgroundDefault, '>')
+			c.WriteRune(s.startx+s.promptLength-1, s.starty, vt.Default, vt.BackgroundDefault, ' ')
+		} else {
+			c.WriteRune(s.startx+s.promptLength-2, s.starty, bashDollarColor, vt.BackgroundDefault, '$')
+			c.WriteRune(s.startx+s.promptLength-1, s.starty, vt.Default, vt.BackgroundDefault, ' ')
+		}
 	}
 
 	// The rune index for the text that has been written
 	index := uint(0)
 
-	draw_written := func() {
-		x = s.startx + s.prompt_length
+	drawWritten := func() {
+		x = s.startx + s.promptLength
 		y = s.starty
 		c.Write(x, y, vt.LightYellow, vt.BackgroundDefault, string(s.written))
 		r := rune(' ')
 		if index < ulen(s.written) {
 			r = s.written[index]
 		}
-		c.WriteRune(x+index, y, vt.Black, vt.BackgroundYellow, r)
+		c.WriteRune(x+index, y, vt.Black, vt.BackgroundGreen, r)
 		vt.SetXY(x, y)
 
 	}
 
 	clear_written := func() {
 		y := s.starty
-		for x := s.startx + s.prompt_length; x < c.W(); x++ {
+		for x := s.startx + s.promptLength; x < c.W(); x++ {
 			c.WriteRune(x, y, vt.LightYellow, vt.BackgroundDefault, ' ')
 		}
 		vt.SetXY(x, y)
 	}
 
-	clear_and_prepare := func() {
+	clearAndPrepare := func() {
 		c.Clear()
-		c.Write(5, 5, vt.LightGreen, vt.BackgroundDefault, start_message)
-		draw_prompt()
-		x = s.startx + s.prompt_length
+		c.Write(5, 2, headerColor, vt.BackgroundDefault, startMessage)
+		drawPrompt()
+		x = s.startx + s.promptLength
 		y = s.starty
-		draw_written()
+		drawWritten()
+		c.Write(5, 3, vt.LightYellow, vt.BackgroundDefault, fmt.Sprintf("%d [%s]", s.dirIndex, s.dir[s.dirIndex]))
 	}
 
-	clear_and_prepare()
+	clearAndPrepare()
 	c.Draw()
+
+	listDirectory := func() {
+		s.written = []rune("ls")
+		clearAndPrepare()
+		if changedDirectory, err := s.execute(string(s.written), s.dir[s.dirIndex]); err != nil {
+			s.drawError(err.Error())
+		} else if changedDirectory {
+			clearAndPrepare()
+		}
+		s.written = []rune{}
+		index = 0
+		clear_written()
+		drawWritten()
+	}
 
 	for !s.quit {
 		key := tty.String()
@@ -316,59 +440,74 @@ func main() {
 			s.quit = true
 		case "c:13": // return
 			if len(s.written) == 0 {
-				s.written = []rune("ls")
+				listDirectory()
+				break
 			}
-			clear_and_prepare()
-			s.execute(string(s.written), s.dir1)
-			clear_written()
+			clearAndPrepare()
+			if changedDirectory, err := s.execute(string(s.written), s.dir[s.dirIndex]); err != nil {
+				s.drawError(err.Error())
+			} else if changedDirectory {
+				//clearAndPrepare()
+				listDirectory()
+				break
+			}
 			s.written = []rune{}
 			index = 0
-			draw_written()
+			clear_written()
+			drawWritten()
 		case "c:127": // backspace
 			clear_written()
-			if len(s.written) > 0 {
+			if len(s.written) > 0 && index > 0 {
 				s.written = append(s.written[:index-1], s.written[index:]...)
 				index--
 			}
-			draw_written()
+			drawWritten()
 		case "c:11": // ctrl-k
 			clear_written()
 			if len(s.written) > 0 {
 				s.written = s.written[:index]
 			}
-			draw_written()
+			drawWritten()
 		case "c:4": // ctrl-d
-			clear_written()
-			if len(s.written) > 0 {
-				s.written = append(s.written[:index], s.written[index+1:]...)
+			if len(s.written) == 0 {
+				s.bashMode = !s.bashMode
+				clear_written()
+				clearAndPrepare()
+				drawWritten()
+				break
 			}
-			draw_written()
+			if len(s.written) > 0 {
+				clear_written()
+				s.written = append(s.written[:index], s.written[index+1:]...)
+				drawWritten()
+			}
 		case "c:1", homeKey, upArrow: // ctrl-a, home, arrow up
 			clear_written()
 			index = 0
-			draw_written()
+			drawWritten()
 		case "c:5", endKey, downArrow: // ctrl-e, end, arrow down
 			clear_written()
 			index = ulen(s.written) // one after the text
-			draw_written()
+			drawWritten()
 		case leftArrow:
 			clear_written()
 			if index > 0 {
 				index--
 			}
-			draw_written()
+			drawWritten()
 		case rightArrow:
 			clear_written()
 			if index < ulen(s.written) {
 				index++
 			}
-			draw_written()
+			drawWritten()
 		case "c:9": // tab
 			if len(s.written) == 0 {
-				s.bashMode = !s.bashMode
-				clear_written()
-				clear_and_prepare()
-				draw_written()
+				s.dirIndex++
+				if s.dirIndex >= ulen(s.dir) {
+					s.dirIndex = 0
+				}
+				listDirectory()
 				break
 			}
 			clear_written()
@@ -376,50 +515,56 @@ func main() {
 			if fields := strings.Fields(last_word_written_so_far); len(fields) > 1 {
 				last_word_written_so_far = fields[len(fields)-1]
 			}
-			if entries, err := os.ReadDir(s.dir1); err == nil { // success
+			found := false
+			if entries, err := os.ReadDir(s.dir[s.dirIndex]); err == nil { // success
 				for _, entry := range entries {
 					name := entry.Name()
 					if strings.HasPrefix(name, last_word_written_so_far) {
 						rest := []rune(name)[len(last_word_written_so_far):]
 						s.written = append(s.written, rest...)
 						index += ulen(rest)
+						found = true
 						break
 					}
 				}
 			}
-		OUT:
-			for _, p := range env.Path() {
-				if entries, err := os.ReadDir(p); err == nil { // success
-					for _, entry := range entries {
-						name := entry.Name()
-						if strings.HasPrefix(name, last_word_written_so_far) && files.IsExecutable(filepath.Join(p, name)) {
-							rest := []rune(name)[len(s.written):]
-							s.written = append(s.written, rest...)
-							index += ulen(rest)
-							break OUT
+			if !found {
+			OUT:
+				for _, p := range env.Path() {
+					if entries, err := os.ReadDir(p); err == nil { // success
+						for _, entry := range entries {
+							name := entry.Name()
+							if strings.HasPrefix(name, last_word_written_so_far) && files.IsExecutable(filepath.Join(p, name)) && len(s.written) < len([]rune(name)) {
+								rest := []rune(name)[len(s.written):]
+								s.written = append(s.written, rest...)
+								index += ulen(rest)
+								break OUT
+							}
 						}
 					}
 				}
 			}
-			draw_written()
+			drawWritten()
 		case "c:12": // ctrl-l
 			c.Clear()
 		case "c:0": // ctrl-space
-			run("tig", s.dir1)
+			run("tig", []string{}, s.dir[s.dirIndex])
 		case "c:3": // ctrl-c
 			cleanupFunc()
-			fmt.Fprintln(os.Stderr, ctrl_c_message)
+			fmt.Fprintln(os.Stderr, ctrlcMessage)
 			os.Exit(1)
 		case "":
 			continue
 		default:
 			clear_written()
-			s.written = append(s.written, []rune(key)...)
+			tmp := append(s.written[:index], []rune(key)...)
+			s.written = append(tmp, s.written[index:]...)
 			index++
-			draw_written()
+			clear_written()
+			drawWritten()
 		}
 		c.Draw()
 	}
 
-	c.Write(10, 10, vt.LightRed, vt.BackgroundDefault, exit_message)
+	c.Write(10, 10, vt.LightRed, vt.BackgroundDefault, exitMessage)
 }
