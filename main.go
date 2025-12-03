@@ -28,6 +28,7 @@ type State struct {
 	promptLength uint
 	written      []rune
 	prevdir      []string
+	showHidden   bool
 }
 
 const (
@@ -86,9 +87,11 @@ func (s *State) ls(dir string) error {
 	}
 	x := s.startx
 	y := s.starty + 1
-	//vt.SetXY(x, y)
 	for _, e := range entries {
 		name := e.Name()
+		if !s.showHidden && strings.HasPrefix(name, ".") {
+			continue
+		}
 		if ulen(name) > longestSoFar {
 			longestSoFar = ulen(name)
 		}
@@ -165,9 +168,6 @@ func run2(executableName string, args []string, path string) (string, error) {
 	command := exec.Command(executableName, args...)
 	command.Dir = path
 	command.Env = env.Environ()
-	//command.Stdout = os.Stdout
-	//command.Stderr = os.Stderr
-	//command.Stdin = os.Stdin
 	outBytes, err := command.CombinedOutput()
 	if err != nil {
 		return "", err
@@ -175,6 +175,7 @@ func run2(executableName string, args []string, path string) (string, error) {
 	return string(outBytes), nil
 }
 
+// shellRun works okay, but have issues when running ie. "htop"
 func shellRun(shellCommand, path string) (string, error) {
 	shellExecutable := files.WhichCached(env.Str("SHELL"))
 	if shellExecutable == "" {
@@ -183,16 +184,11 @@ func shellRun(shellCommand, path string) (string, error) {
 	args := []string{"-c", shellCommand}
 	switch filepath.Base(shellExecutable) {
 	case "bash", "zsh":
-		//args = []string{"--globalrcs", "--rcs", "-c", shellCommand}
-		//args = []string{"-i", "-c", shellCommand}
-		//args = []string{"-i", "-c", "--", shellCommand + ";exit"}
 		args = []string{"-i", "-c", shellCommand + ";exit"}
 	}
 	command := exec.Command(shellExecutable, args...)
 	command.Dir = path
 	command.Env = env.Environ()
-	//command.Stdout = os.Stdout
-	//command.Stderr = os.Stderr
 	command.Stdin = os.Stdin
 	outBytes, err := command.CombinedOutput()
 	if err != nil {
@@ -365,13 +361,14 @@ func main() {
 	var (
 		x, y uint
 		s    = &State{
-			c:        c,
-			dir:      []string{".", env.HomeDir(), "/tmp"},
-			prevdir:  []string{".", env.HomeDir(), "/tmp"},
-			dirIndex: 0,
-			quit:     false,
-			startx:   uint(5),
-			starty:   uint(6),
+			c:          c,
+			dir:        []string{".", env.HomeDir(), "/tmp"},
+			prevdir:    []string{".", env.HomeDir(), "/tmp"},
+			dirIndex:   0,
+			quit:       false,
+			startx:     uint(5),
+			starty:     uint(6),
+			showHidden: false,
 		}
 	)
 
@@ -415,17 +412,32 @@ func main() {
 
 	clearAndPrepare := func() {
 		c.Clear()
+
+		// the header
 		c.Write(5, 2, headerColor, vt.BackgroundDefault, startMessage)
+
+		// the directory number
+		c.Write(5, 3, vt.LightYellow, vt.BackgroundDefault, fmt.Sprintf("%d [%s]", s.dirIndex, s.dir[s.dirIndex]))
+
+		// if files are hidden or not
+		if s.showHidden {
+			c.Write(5, 4, vt.Default, vt.BackgroundDefault, ".")
+		} else {
+			c.Write(5, 4, vt.Default, vt.BackgroundDefault, " ")
+		}
+
+		// the prompt and written text (if any)
 		drawPrompt()
 		x = s.startx + s.promptLength
 		y = s.starty
 		drawWritten()
-		c.Write(5, 3, vt.LightYellow, vt.BackgroundDefault, fmt.Sprintf("%d [%s]", s.dirIndex, s.dir[s.dirIndex]))
+
+		// list the currently selected directory
+		s.ls(s.dir[s.dirIndex])
 	}
 
 	listDirectory := func() {
 		clearAndPrepare()
-		s.ls(s.dir[s.dirIndex])
 		s.written = []rune{}
 		index = 0
 		clearWritten()
@@ -433,7 +445,6 @@ func main() {
 	}
 
 	clearAndPrepare()
-	s.ls(s.dir[s.dirIndex])
 	c.Draw()
 
 	for !s.quit {
@@ -450,7 +461,6 @@ func main() {
 			if changedDirectory, err := s.execute(string(s.written), s.dir[s.dirIndex]); err != nil {
 				s.drawError(err.Error())
 			} else if changedDirectory {
-				//clearAndPrepare()
 				listDirectory()
 				break
 			}
@@ -477,7 +487,6 @@ func main() {
 				os.Exit(1)
 				break
 			}
-
 			if len(s.written) > 0 {
 				clearWritten()
 				s.written = append(s.written[:index], s.written[index+1:]...)
@@ -503,6 +512,9 @@ func main() {
 				index++
 			}
 			drawWritten()
+		case "c:15", "c:8": // ctrl-o, ctrl-h
+			s.showHidden = !s.showHidden
+			listDirectory()
 		case "c:9": // tab
 			if len(s.written) == 0 {
 				s.dirIndex++
@@ -558,7 +570,6 @@ func main() {
 				os.Exit(1)
 				break
 			}
-
 			s.written = []rune{}
 			index = 0
 			clearWritten()
