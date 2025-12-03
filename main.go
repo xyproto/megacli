@@ -252,6 +252,15 @@ func (s *State) execute(cmd, path string) (bool, error) {
 	if cmd == "l" || cmd == "ls" || cmd == "dir" {
 		return false, s.ls(path)
 	}
+	if strings.HasSuffix(cmd, "which ") {
+		rest := ""
+		if len(cmd) > 6 {
+			rest = cmd[6:]
+			found := files.WhichCached(rest)
+			s.drawOutput(found)
+		}
+		return false, nil
+	}
 	if cmd == "cd" || cmd == "-" || strings.HasPrefix(cmd, "cd ") {
 		possibleDirectory := ""
 		rest := ""
@@ -431,13 +440,11 @@ func main() {
 		x = s.startx + s.promptLength
 		y = s.starty
 		drawWritten()
-
-		// list the currently selected directory
-		s.ls(s.dir[s.dirIndex])
 	}
 
 	listDirectory := func() {
 		clearAndPrepare()
+		s.ls(s.dir[s.dirIndex])
 		s.written = []rune{}
 		index = 0
 		clearWritten()
@@ -445,6 +452,7 @@ func main() {
 	}
 
 	clearAndPrepare()
+	s.ls(s.dir[s.dirIndex])
 	c.Draw()
 
 	for !s.quit {
@@ -562,6 +570,7 @@ func main() {
 		case "c:12": // ctrl-l
 			c.Clear()
 			clearAndPrepare()
+			s.ls(s.dir[s.dirIndex])
 		case "c:0": // ctrl-space
 			run("tig", []string{}, s.dir[s.dirIndex])
 		case "c:3": // ctrl-c
