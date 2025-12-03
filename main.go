@@ -408,7 +408,6 @@ func main() {
 		}
 		c.WriteRune(x+index, y, vt.Black, vt.BackgroundGreen, r)
 		vt.SetXY(x, y)
-
 	}
 
 	clearWritten := func() {
