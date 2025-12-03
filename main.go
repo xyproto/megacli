@@ -468,12 +468,12 @@ func main() {
 			drawWritten()
 		case "c:4": // ctrl-d
 			if len(s.written) == 0 {
-				s.bashMode = !s.bashMode
-				clearWritten()
-				clearAndPrepare()
-				drawWritten()
+				cleanupFunc()
+				fmt.Fprintln(os.Stderr, ctrlcMessage)
+				os.Exit(1)
 				break
 			}
+
 			if len(s.written) > 0 {
 				clearWritten()
 				s.written = append(s.written[:index], s.written[index+1:]...)
