@@ -307,6 +307,17 @@ func (s *State) execute(cmd, path string) (bool, error) {
 		s.drawOutput(cmd[5:])
 		return false, nil
 	}
+	if cmd == filepath.Base(env.Str("EDITOR")) {
+		return false, s.edit("", path)
+	}
+	if strings.HasPrefix(cmd, filepath.Base(env.Str("EDITOR"))+" ") {
+		spaceIndex := strings.Index(cmd, " ")
+		rest := ""
+		if spaceIndex+1 < len(cmd) {
+			rest = cmd[spaceIndex+1:]
+		}
+		return false, s.edit(rest, path)
+	}
 	if strings.Contains(cmd, " ") {
 		fields := strings.Fields(cmd)
 		output, err := run2(fields[0], strings.Split(fields[1], " "), s.dir[s.dirIndex])
@@ -424,22 +435,18 @@ func main() {
 		c.Write(5, 3, vt.LightYellow, vt.BackgroundDefault, fmt.Sprintf("%d [%s]", s.dirIndex, s.dir[s.dirIndex]))
 	}
 
-	clearAndPrepare()
-	c.Draw()
-
 	listDirectory := func() {
-		s.written = []rune("ls")
 		clearAndPrepare()
-		if changedDirectory, err := s.execute(string(s.written), s.dir[s.dirIndex]); err != nil {
-			s.drawError(err.Error())
-		} else if changedDirectory {
-			clearAndPrepare()
-		}
+		s.ls(s.dir[s.dirIndex])
 		s.written = []rune{}
 		index = 0
 		clearWritten()
 		drawWritten()
 	}
+
+	clearAndPrepare()
+	s.ls(s.dir[s.dirIndex])
+	c.Draw()
 
 	for !s.quit {
 		key := tty.String()
@@ -559,6 +566,13 @@ func main() {
 		case "c:0": // ctrl-space
 			run("tig", []string{}, s.dir[s.dirIndex])
 		case "c:3": // ctrl-c
+			if len(s.written) == 0 {
+				cleanupFunc()
+				fmt.Fprintln(os.Stderr, ctrlcMessage)
+				os.Exit(1)
+				break
+			}
+
 			s.written = []rune{}
 			index = 0
 			clearWritten()
