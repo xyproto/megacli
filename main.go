@@ -101,7 +101,10 @@ func (s *State) ls(dir string) error {
 			longestSoFar = ulen(name)
 		}
 		path := filepath.Join(dir, name)
-		if files.IsDir(path) {
+		if files.IsDir(path) && files.IsSymlink(path) {
+			s.c.Write(x, y, vt.Blue, vt.BackgroundDefault, name)
+			s.c.Write(x+ulen(name), y, vt.White, vt.BackgroundDefault, ">")
+		} else if files.IsDir(path) {
 			s.c.Write(x, y, vt.Blue, vt.BackgroundDefault, name)
 			s.c.Write(x+ulen(name), y, vt.White, vt.BackgroundDefault, "/")
 		} else if files.IsExecutableCached(path) {
