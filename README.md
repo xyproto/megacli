@@ -4,6 +4,16 @@ A simple and colorful TUI shell for Linux, written in Go.
 
 ![screenshot](img/screenshot.png)
 
+This project can be used as the `github.com/xyproto/megacli` package, or as a standalone exectuable.
+
+### Building
+
+    make
+
+### Installation
+
+    make install
+
 ### Commands
 
 * any filename - edit file with `$EDITOR`
