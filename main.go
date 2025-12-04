@@ -17,22 +17,8 @@ import (
 	"github.com/xyproto/vt"
 )
 
-// State holds the current state of the shell, then canvas and the directory structures
-type State struct {
-	c            *vt.Canvas
-	dir          []string
-	dirIndex     uint
-	quit         bool
-	startx       uint
-	starty       uint
-	promptLength uint
-	written      []rune
-	prevdir      []string
-	showHidden   bool
-}
-
 const (
-	versionString = "MegaCLI 1.0.7"
+	versionString = "MegaCLI 1.0.8"
 
 	startMessage = "---=[ MegaCLI ]=---"
 
@@ -53,6 +39,20 @@ const (
 
 	topLine = uint(1)
 )
+
+// State holds the current state of the shell, then canvas and the directory structures
+type State struct {
+	c            *vt.Canvas
+	dir          []string
+	dirIndex     uint
+	quit         bool
+	startx       uint
+	starty       uint
+	promptLength uint
+	written      []rune
+	prevdir      []string
+	showHidden   bool
+}
 
 func ulen[T string | []rune | []string](xs T) uint {
 	return uint(len(xs))
