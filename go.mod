@@ -1,4 +1,4 @@
-module github.com/xyproto/megacli
+module github.com/xyproto/megafile
 
 go 1.25.4
 

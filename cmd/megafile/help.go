@@ -2,7 +2,7 @@ package main
 
 const usageString = versionString + `
 
-Commands within MegaCLI:
+Commands within MegaFile:
 
 any filename        edit file with $EDITOR
 cd, .. or any dir   change directory

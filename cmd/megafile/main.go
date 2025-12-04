@@ -1,4 +1,4 @@
-// package main is the main package for the MegaCLI program
+// package main is the main package for the MegaFile program
 package main
 
 import (
@@ -9,14 +9,14 @@ import (
 	"time"
 
 	"github.com/xyproto/env/v2"
-	"github.com/xyproto/megacli"
+	"github.com/xyproto/megafile"
 	"github.com/xyproto/vt"
 )
 
 const (
-	versionString = "MegaCLI 1.0.9"
+	versionString = "MegaFile 1.1.0"
 
-	startMessage = "---=[ MegaCLI ]=---"
+	startMessage = "---=[ MegaFile ]=---"
 )
 
 func main() {
@@ -36,20 +36,20 @@ func main() {
 
 	// Prepare a canvas
 	c := vt.NewCanvas()
-	defer megacli.Cleanup(c)
+	defer megafile.Cleanup(c)
 
 	// Handle ctrl-c
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-ch
-		megacli.Cleanup(c)
+		megafile.Cleanup(c)
 		os.Exit(1)
 	}()
 
 	tty, err := vt.NewTTY()
 	if err != nil {
-		megacli.Cleanup(c)
+		megafile.Cleanup(c)
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -57,8 +57,8 @@ func main() {
 	tty.SetTimeout(10 * time.Millisecond)
 
 	startdirs := []string{".", env.HomeDir(), "/tmp"}
-	curdir, err := megacli.MegaCLI(c, tty, startdirs, startMessage)
-	if err != nil && err != megacli.ErrExit {
+	curdir, err := megafile.MegaFile(c, tty, startdirs, startMessage)
+	if err != nil && err != megafile.ErrExit {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
