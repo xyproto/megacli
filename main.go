@@ -198,27 +198,29 @@ func (s *State) setPath(path string) {
 }
 
 // execute tries to execute the given command in the given directory,
-// and returns true if the directory was changed and an error if something failed
-func (s *State) execute(cmd, path string) (bool, error) {
+// and returns true if the directory was changed
+// and returns true if a file was edited
+// and returns an error if something went wrong
+func (s *State) execute(cmd, path string) (bool, bool, error) {
 	// Common for non-bash and bash mode
 	if cmd == "exit" || cmd == "quit" || cmd == "q" || cmd == "bye" {
 		s.quit = true
-		return false, nil
+		return false, false, nil
 	}
 	if files.IsDir(filepath.Join(path, cmd)) { // relative path
 		newPath := filepath.Join(path, cmd)
 		if s.dir[s.dirIndex] != newPath {
 			s.setPath(newPath)
-			return true, nil
+			return true, false, nil
 		}
-		return false, nil
+		return false, false, nil
 	}
 	if files.IsDir(cmd) { // absolute path
 		if s.dir[s.dirIndex] != cmd {
 			s.setPath(cmd)
-			return true, nil
+			return true, false, nil
 		}
-		return false, nil
+		return false, false, nil
 	}
 	if files.IsFile(filepath.Join(path, cmd)) { // relative path
 		if strings.HasPrefix(cmd, "./") && files.IsExecutableCached(filepath.Join(path, cmd)) {
@@ -231,15 +233,15 @@ func (s *State) execute(cmd, path string) (bool, error) {
 			if err == nil {
 				s.drawOutput(output)
 			}
-			return false, err
+			return false, false, err
 		}
-		return false, s.edit(cmd, path)
+		return false, true, s.edit(cmd, path)
 	}
 	if files.IsFile(cmd) { // abs absolute path
-		return false, s.edit(cmd, path)
+		return false, true, s.edit(cmd, path)
 	}
 	if cmd == "l" || cmd == "ls" || cmd == "dir" {
-		return false, s.ls(path)
+		return false, false, s.ls(path)
 	}
 	if strings.HasSuffix(cmd, "which ") {
 		rest := ""
@@ -248,7 +250,7 @@ func (s *State) execute(cmd, path string) (bool, error) {
 			found := files.WhichCached(rest)
 			s.drawOutput(found)
 		}
-		return false, nil
+		return false, false, nil
 	}
 	if cmd == "cd" || cmd == "-" || strings.HasPrefix(cmd, "cd ") {
 		possibleDirectory := ""
@@ -261,39 +263,39 @@ func (s *State) execute(cmd, path string) (bool, error) {
 			homedir := env.HomeDir()
 			if s.dir[s.dirIndex] != homedir {
 				s.setPath(homedir)
-				return true, nil
+				return true, false, nil
 			}
-			return false, nil
+			return false, false, nil
 		} else if files.IsDir(possibleDirectory) {
 			if s.dir[s.dirIndex] != possibleDirectory {
 				s.setPath(possibleDirectory)
-				return true, nil
+				return true, false, nil
 			}
-			return false, nil
+			return false, false, nil
 		} else if files.IsDir(rest) {
 			if s.dir[s.dirIndex] != rest {
 				s.setPath(rest)
-				return true, nil
+				return true, false, nil
 			}
-			return false, nil
+			return false, false, nil
 		} else if cmd == "-" || rest == "-" {
 			if s.dir[s.dirIndex] != s.prevdir[s.dirIndex] {
 				s.prevdir[s.dirIndex], s.dir[s.dirIndex] = s.dir[s.dirIndex], s.prevdir[s.dirIndex]
-				return true, nil
+				return true, false, nil
 			}
-			return false, nil
+			return false, false, nil
 		}
-		return false, errors.New("cd what")
+		return false, false, errors.New("cd WHAT?")
 	}
 	if cmd == "echo" {
-		return false, nil
+		return false, false, nil
 	}
 	if strings.HasPrefix(cmd, "echo ") {
 		s.drawOutput(cmd[5:])
-		return false, nil
+		return false, false, nil
 	}
 	if cmd == filepath.Base(env.Str("EDITOR")) {
-		return false, s.edit("", path)
+		return false, true, s.edit("", path)
 	}
 	if strings.HasPrefix(cmd, filepath.Base(env.Str("EDITOR"))+" ") {
 		spaceIndex := strings.Index(cmd, " ")
@@ -301,7 +303,7 @@ func (s *State) execute(cmd, path string) (bool, error) {
 		if spaceIndex+1 < len(cmd) {
 			rest = cmd[spaceIndex+1:]
 		}
-		return false, s.edit(rest, path)
+		return false, true, s.edit(rest, path)
 	}
 	if strings.Contains(cmd, " ") {
 		fields := strings.Fields(cmd)
@@ -309,12 +311,12 @@ func (s *State) execute(cmd, path string) (bool, error) {
 		if err == nil {
 			s.drawOutput(output)
 		}
-		return false, err
+		return false, false, err
 	} else if foundExecutableInPath := files.WhichCached(cmd); foundExecutableInPath != "" {
-		return false, run(foundExecutableInPath, []string{}, s.dir[s.dirIndex])
+		return false, false, run(foundExecutableInPath, []string{}, s.dir[s.dirIndex])
 	}
 
-	return false, fmt.Errorf("WHAT DO YOU MEAN, %s?", cmd)
+	return false, false, fmt.Errorf("WHAT DO YOU MEAN, %s?", cmd)
 }
 
 func main() {
@@ -460,11 +462,10 @@ func main() {
 				break
 			}
 			clearAndPrepare()
-			if changedDirectory, err := s.execute(string(s.written), s.dir[s.dirIndex]); err != nil {
+			if changedDirectory, editedFile, err := s.execute(string(s.written), s.dir[s.dirIndex]); err != nil {
 				s.drawError(err.Error())
-			} else if changedDirectory {
+			} else if changedDirectory || editedFile {
 				listDirectory()
-				break
 			}
 			s.written = []rune{}
 			index = 0
