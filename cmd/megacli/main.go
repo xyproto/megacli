@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	versionString = "MegaCLI 1.0.8"
+	versionString = "MegaCLI 1.0.9"
 
 	startMessage = "---=[ MegaCLI ]=---"
 )
