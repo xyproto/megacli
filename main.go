@@ -309,12 +309,9 @@ func (s *State) execute(cmd, path string) (bool, bool, error) {
 		return false, true, s.edit(rest, path)
 	}
 	if strings.Contains(cmd, " ") {
-		fields := strings.SplitN(cmd, " ", 1)
+		fields := strings.SplitN(cmd, " ", -1)
 		program := fields[0]
-		arguments := []string{fields[1]}
-		if strings.Contains(fields[1], " ") {
-			arguments = strings.Split(fields[1], " ")
-		}
+		arguments := fields[1:]
 		output, err := run2(program, arguments, s.dir[s.dirIndex])
 		if err == nil {
 			s.drawOutput(output)
