@@ -201,7 +201,7 @@ func (s *State) setPath(path string) {
 // and returns true if the directory was changed and an error if something failed
 func (s *State) execute(cmd, path string) (bool, error) {
 	// Common for non-bash and bash mode
-	if cmd == "exit" || cmd == "quit" || cmd == "q" {
+	if cmd == "exit" || cmd == "quit" || cmd == "q" || cmd == "bye" {
 		s.quit = true
 		return false, nil
 	}
@@ -319,9 +319,15 @@ func (s *State) execute(cmd, path string) (bool, error) {
 
 func main() {
 
-	if len(os.Args) > 1 && os.Args[1] == "--version" {
-		fmt.Println(versionString)
-		return
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "-v", "--version":
+			fmt.Println(versionString)
+			return
+		case "-h", "--help":
+			fmt.Print(usageString)
+			return
+		}
 	}
 
 	// Initialize vt terminal settings
