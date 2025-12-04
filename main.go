@@ -309,8 +309,13 @@ func (s *State) execute(cmd, path string) (bool, bool, error) {
 		return false, true, s.edit(rest, path)
 	}
 	if strings.Contains(cmd, " ") {
-		fields := strings.Fields(cmd)
-		output, err := run2(fields[0], strings.Split(fields[1], " "), s.dir[s.dirIndex])
+		fields := strings.SplitN(cmd, " ", 1)
+		program := fields[0]
+		arguments := []string{fields[1]}
+		if strings.Contains(fields[1], " ") {
+			arguments = strings.Split(fields[1], " ")
+		}
+		output, err := run2(program, arguments, s.dir[s.dirIndex])
 		if err == nil {
 			s.drawOutput(output)
 		}
@@ -533,7 +538,35 @@ func main() {
 		case "c:15", "c:8": // ctrl-o, ctrl-h
 			s.showHidden = !s.showHidden
 			listDirectory()
-		case "c:9": // tab
+		case "c:14": // ctrl-n : enter the most recent directory
+			if entries, err := os.ReadDir(s.dir[s.dirIndex]); err == nil { // success
+				var youngestTime time.Time
+				var youngestName string
+				for _, entry := range entries {
+					if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
+						fi, err := entry.Info()
+						if err != nil {
+							continue
+						}
+						if fi.ModTime().After(youngestTime) {
+							youngestTime = fi.ModTime()
+							youngestName = entry.Name()
+						}
+					}
+				}
+				if youngestName != "" {
+					s.setPath(filepath.Join(s.dir[s.dirIndex], youngestName))
+					listDirectory()
+				}
+			}
+		case "c:0": // ctrl-space : cycle directory numbers backwards
+			if s.dirIndex == 0 {
+				s.dirIndex = ulen(s.dir) - 1
+			} else {
+				s.dirIndex--
+			}
+			listDirectory()
+		case "c:9": // tab : cycle directory numbers or tab complete
 			if len(s.written) == 0 {
 				s.dirIndex++
 				if s.dirIndex >= ulen(s.dir) {
@@ -580,13 +613,19 @@ func main() {
 		case "c:12": // ctrl-l
 			c.Clear()
 			clearAndPrepare()
-		case "c:0", "c:20": // ctrl-space, ctrl-t
+		case "c:2", "c:16": // ctrl-b, ctrl-p : go up one directory
+			absPath, err := filepath.Abs(filepath.Join(s.dir[s.dirIndex], ".."))
+			if err == nil { // success
+				s.setPath(absPath)
+				listDirectory()
+			}
+		case "c:20": // ctrl-t : tig
 			run("tig", []string{}, s.dir[s.dirIndex])
-		case "c:7": // ctrl-g
+		case "c:7": // ctrl-g : lazygit
 			run("lazygit", []string{}, s.dir[s.dirIndex])
-		//case "c:6": // ctrl-r
+		//case "c:6": // ctrl-r : history search
 		//run("fzf", []string{"a", "b", "c"}, s.dir[s.dirIndex])
-		//case "c:18": // ctrl-f
+		//case "c:18": // ctrl-f : find in files
 		//run("rg", []string{"-n", "-w", string(s.written)}, s.dir[s.dirIndex])
 		case "c:3": // ctrl-c
 			if len(s.written) == 0 {
