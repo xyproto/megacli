@@ -1,15 +1,13 @@
-// package main is the main package for the MegaCLI program
-package main
+// package megacli provides functionality for a simple TUI for browsing files and directories
+package megacli
 
 import (
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/xyproto/env/v2"
@@ -18,10 +16,6 @@ import (
 )
 
 const (
-	versionString = "MegaCLI 1.0.8"
-
-	startMessage = "---=[ MegaCLI ]=---"
-
 	leftArrow  = "←"
 	rightArrow = "→"
 	upArrow    = "↑"
@@ -53,6 +47,8 @@ type State struct {
 	prevdir      []string
 	showHidden   bool
 }
+
+var ErrExit = errors.New("exit")
 
 func ulen[T string | []rune | []string](xs T) uint {
 	return uint(len(xs))
@@ -162,29 +158,6 @@ func run2(executableName string, args []string, path string) (string, error) {
 	command := exec.Command(executableName, args...)
 	command.Dir = path
 	command.Env = env.Environ()
-	outBytes, err := command.CombinedOutput()
-	if err != nil {
-		return "", err
-	}
-	return string(outBytes), nil
-}
-
-// shellRun works okay, but have issues when running ie. "htop"
-// Also, it uses TERM=dumb
-func shellRun(shellCommand, path string) (string, error) {
-	shellExecutable := files.WhichCached(env.Str("SHELL"))
-	if shellExecutable == "" {
-		shellExecutable = "bash"
-	}
-	args := []string{"-c", shellCommand}
-	switch filepath.Base(shellExecutable) {
-	case "bash", "zsh":
-		args = []string{"-i", "-c", shellCommand + ";exit"}
-	}
-	command := exec.Command(shellExecutable, args...)
-	command.Dir = path
-	command.Env = append(env.Environ(), "TERM=dumb")
-	command.Stdin = os.Stdin
 	outBytes, err := command.CombinedOutput()
 	if err != nil {
 		return "", err
@@ -335,57 +308,20 @@ func (s *State) currentAbsDir() string {
 	return path
 }
 
-func main() {
+func Cleanup(c *vt.Canvas) {
+	vt.SetXY(0, c.H()-1)
+	c.Clear()
+	vt.SetLineWrap(true)
+	vt.ShowCursor(true)
+}
 
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
-		case "-v", "--version":
-			fmt.Println(versionString)
-			return
-		case "-h", "--help":
-			fmt.Print(usageString)
-			return
-		}
-	}
-
-	// Initialize vt terminal settings
-	vt.Init()
-
-	// Prepare a canvas
-	c := vt.NewCanvas()
-	cleanupFunc := func() {
-		vt.SetXY(0, c.H()-1)
-		c.Clear()
-		vt.SetLineWrap(true)
-		vt.ShowCursor(true)
-		//vt.Home() // also clears the screen?
-	}
-	defer cleanupFunc()
-
-	// Handle ctrl-c
-	ch := make(chan os.Signal, 1)
-	signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-ch
-		cleanupFunc()
-		os.Exit(1)
-	}()
-
-	tty, err := vt.NewTTY()
-	if err != nil {
-		cleanupFunc()
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	defer tty.Close()
-	tty.SetTimeout(10 * time.Millisecond)
-
+func MegaCLI(c *vt.Canvas, tty *vt.TTY, startdirs []string, startMessage string) (string, error) {
 	var (
 		x, y uint
 		s    = &State{
 			c:          c,
-			dir:        []string{".", env.HomeDir(), "/tmp"},
-			prevdir:    []string{".", env.HomeDir(), "/tmp"},
+			dir:        startdirs,
+			prevdir:    startdirs,
 			dirIndex:   0,
 			quit:       false,
 			startx:     uint(5),
@@ -453,8 +389,8 @@ func main() {
 
 		// the prompt and written text (if any)
 		drawPrompt()
-		x = s.startx + s.promptLength
-		y = s.starty
+		//x = s.startx + s.promptLength
+		//y = s.starty
 		drawWritten()
 	}
 
@@ -506,9 +442,8 @@ func main() {
 			drawWritten()
 		case "c:4": // ctrl-d
 			if len(s.written) == 0 {
-				cleanupFunc()
-				os.Exit(1)
-				break
+				Cleanup(c)
+				return s.currentAbsDir(), ErrExit
 			}
 			if len(s.written) > 0 {
 				clearWritten()
@@ -629,9 +564,8 @@ func main() {
 		//run("rg", []string{"-n", "-w", string(s.written)}, s.dir[s.dirIndex])
 		case "c:3": // ctrl-c
 			if len(s.written) == 0 {
-				cleanupFunc()
-				os.Exit(1)
-				break
+				Cleanup(c)
+				return s.currentAbsDir(), ErrExit
 			}
 			s.written = []rune{}
 			index = 0
@@ -653,6 +587,6 @@ func main() {
 		c.Draw()
 	}
 
-	// Write the current directory path to stderr at exit
-	fmt.Fprintln(os.Stderr, s.currentAbsDir())
+	Cleanup(c)
+	return s.currentAbsDir(), nil
 }

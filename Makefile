@@ -34,7 +34,7 @@ BUILDFLAGS ?= -ldflags "-s -w -linkmode=external -extldflags $(LDFLAGS)"
 endif
 
 megacli: $(SRCFILES)
-	$(GOBUILD) $(GOFLAGS) $(BUILDFLAGS) -o megacli
+	cd cmd/megacli && $(GOBUILD) $(GOFLAGS) $(BUILDFLAGS) -o ../../megacli
 
 install: megacli
 	mkdir -p "$(DESTDIR)$(PREFIX)/bin"
