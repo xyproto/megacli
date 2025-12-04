@@ -580,6 +580,9 @@ func main() {
 		case "":
 			continue
 		default:
+			if strings.TrimSpace(key) == "" {
+				continue
+			}
 			clearWritten()
 			tmp := append(s.written[:index], []rune(key)...)
 			s.written = append(tmp, s.written[index:]...)
