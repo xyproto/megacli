@@ -1,4 +1,4 @@
-// package megafile provides functionality for a simple TUI for browsing files and directories
+// Package megafile provides functionality for a simple TUI for browsing files and directories
 package megafile
 
 import (
@@ -58,6 +58,7 @@ type State struct {
 	selectedIndex int
 }
 
+// ErrExit is the error that is returned if the user appeared to want to exit
 var ErrExit = errors.New("exit")
 
 func ulen[T string | []rune | []string](xs T) uint {
@@ -398,6 +399,7 @@ func (s *State) currentAbsDir() string {
 	return path
 }
 
+// Cleanup tries to set everything right in the terminal emulator before returning
 func Cleanup(c *vt.Canvas) {
 	vt.SetXY(0, c.H()-1)
 	c.Clear()
@@ -405,6 +407,12 @@ func Cleanup(c *vt.Canvas) {
 	vt.ShowCursor(true)
 }
 
+// MegaFile launches a file browser
+// c and tty is a canvas and TTY, initiated with the vt package
+// startdirs is a slice of directories to browse (toggle with tab)
+// startMessage is the string to display at the top of the screen
+// the function returns the absolute path to the directory the user ended up in,
+// and an error if something went wrong
 func MegaFile(c *vt.Canvas, tty *vt.TTY, startdirs []string, startMessage string) (string, error) {
 	var (
 		x, y uint
@@ -561,11 +569,9 @@ func MegaFile(c *vt.Canvas, tty *vt.TTY, startdirs []string, startMessage string
 				Cleanup(c)
 				return s.currentAbsDir(), ErrExit
 			}
-			if len(s.written) > 0 {
-				clearWritten()
-				s.written = append(s.written[:index], s.written[index+1:]...)
-				drawWritten()
-			}
+			clearWritten()
+			s.written = append(s.written[:index], s.written[index+1:]...)
+			drawWritten()
 		case "c:1", homeKey: // ctrl-a, home
 			if len(s.written) > 0 {
 				clearWritten()
