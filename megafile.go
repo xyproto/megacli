@@ -551,13 +551,7 @@ func MegaFile(c *vt.Canvas, tty *vt.TTY, startdirs []string, startMessage string
 			index = 0
 			clearWritten()
 			drawWritten() // for the cursor
-		case "c:127": // backspace
-			clearWritten()
-			if len(s.written) > 0 && index > 0 {
-				s.written = append(s.written[:index-1], s.written[index:]...)
-				index--
-			}
-			drawWritten()
+
 		case "c:11": // ctrl-k
 			clearWritten()
 			if len(s.written) > 0 {
@@ -636,9 +630,36 @@ func MegaFile(c *vt.Canvas, tty *vt.TTY, startdirs []string, startMessage string
 				index++
 			}
 			drawWritten()
-		case "c:15", "c:8": // ctrl-o, ctrl-h
+		case "c:15": // ctrl-o, toggle hidden files
 			s.showHidden = !s.showHidden
 			listDirectory()
+		case "c:8": // ctrl-h, either toggle hidden files or delete text
+			if index == 0 {
+				s.showHidden = !s.showHidden
+				listDirectory()
+				break
+			}
+			clearWritten()
+			if len(s.written) > 0 && index > 0 {
+				s.written = append(s.written[:index-1], s.written[index:]...)
+				index--
+			}
+			drawWritten()
+		case "c:127": // backspace, either go one directory up or delete text
+			if index == 0 { // cursor is at the start of the line, nothing to delete
+				// go one directory up
+				if absPath, err := filepath.Abs(filepath.Join(s.dir[s.dirIndex], "..")); err == nil { // success
+					s.setPath(absPath)
+					listDirectory()
+				}
+				break
+			}
+			clearWritten()
+			if len(s.written) > 0 && index > 0 {
+				s.written = append(s.written[:index-1], s.written[index:]...)
+				index--
+			}
+			drawWritten()
 		case "c:14": // ctrl-n : enter the most recent directory
 			if entries, err := os.ReadDir(s.dir[s.dirIndex]); err == nil { // success
 				var youngestTime time.Time
@@ -715,8 +736,7 @@ func MegaFile(c *vt.Canvas, tty *vt.TTY, startdirs []string, startMessage string
 			c.Clear()
 			clearAndPrepare()
 		case "c:2", "c:16": // ctrl-b, ctrl-p : go up one directory
-			absPath, err := filepath.Abs(filepath.Join(s.dir[s.dirIndex], ".."))
-			if err == nil { // success
+			if absPath, err := filepath.Abs(filepath.Join(s.dir[s.dirIndex], "..")); err == nil { // success
 				s.setPath(absPath)
 				listDirectory()
 			}
