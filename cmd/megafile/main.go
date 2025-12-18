@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/xyproto/env/v2"
+	"github.com/xyproto/files"
 	"github.com/xyproto/megafile"
 	"github.com/xyproto/vt"
 )
@@ -57,11 +58,11 @@ func main() {
 	tty.SetTimeout(10 * time.Millisecond)
 
 	startdirs := []string{".", env.HomeDir(), "/tmp"}
-	if len(os.Args) > 1 {
-		// Use command-line argument as the first directory
+	if len(os.Args) > 1 && files.IsDir(os.Args[1]) {
+		// Use command-line argument as the first directory, if it is a directory
 		startdirs = []string{os.Args[1], env.HomeDir(), "/tmp"}
 	}
-	curdir, err := megafile.MegaFile(c, tty, startdirs, startMessage)
+	curdir, err := megafile.MegaFile(c, tty, startdirs, startMessage, env.StrAlt("EDITOR", "vi"))
 	if err != nil && err != megafile.ErrExit {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
