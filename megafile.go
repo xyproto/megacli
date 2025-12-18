@@ -332,11 +332,19 @@ func (s *State) confirmBinaryEdit(tty *vt.TTY, filename string) bool {
 }
 
 func (s *State) edit(filename, path string) error {
-	editorPath, err := exec.LookPath(s.editor)
+	executableName := s.editor
+	var args []string
+	if strings.Contains(executableName, " ") {
+		fields := strings.Split(s.editor, " ")
+		executableName = fields[0]
+		args = fields[1:]
+	}
+	editorPath, err := exec.LookPath(executableName)
 	if err != nil {
 		return err
 	}
-	command := exec.Command(editorPath, filename)
+	args = append(args, filename)
+	command := exec.Command(editorPath, args...)
 	command.Dir = path
 	command.Stdout = os.Stdout
 	command.Stderr = os.Stderr
