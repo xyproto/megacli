@@ -29,12 +29,6 @@ const (
 	topLine = uint(1)
 )
 
-var (
-	AngleColor  = vt.LightRed
-	PromptColor = vt.LightGreen
-	TitleColor  = vt.LightMagenta
-)
-
 // FileEntry represents a file entry with position and name information
 type FileEntry struct {
 	x           uint
@@ -47,7 +41,6 @@ type FileEntry struct {
 type State struct {
 	canvas         *vt.Canvas
 	tty            *vt.TTY
-	dir            []string
 	dirIndex       uint
 	quit           bool
 	startx         uint
@@ -55,13 +48,17 @@ type State struct {
 	promptLength   uint
 	written        []rune
 	prevdir        []string
-	showHidden     bool
 	fileEntries    []FileEntry
 	selectedIndex  int
 	selectionMoved bool
 	filterPattern  string
 	editor         string // typically $EDITOR
-	startMessage   string // title/header
+	ShowHidden     bool
+	Directories    []string
+	StartMessage   string // title/header
+	AngleColor     vt.AttributeColor
+	PromptColor    vt.AttributeColor
+	TitleColor     vt.AttributeColor
 }
 
 // ErrExit is the error that is returned if the user appeared to want to exit
@@ -119,7 +116,7 @@ func (s *State) clearHighlight() {
 		}
 
 		// Redraw with original colors
-		path := filepath.Join(s.dir[s.dirIndex], entry.realName)
+		path := filepath.Join(s.Directories[s.dirIndex], entry.realName)
 		var color vt.AttributeColor
 		var suffix string
 
@@ -171,7 +168,7 @@ func (s *State) ls(dir string) (int, error) {
 
 	for _, e := range entries {
 		name := e.Name()
-		if !s.showHidden && strings.HasPrefix(name, ".") {
+		if !s.ShowHidden && strings.HasPrefix(name, ".") {
 			continue
 		}
 
@@ -389,11 +386,11 @@ func run2(executableName string, args []string, path string) (string, error) {
 func (s *State) setPath(path string) {
 	absPath, err := filepath.Abs(path)
 	if err == nil { // success
-		s.prevdir[s.dirIndex] = s.dir[s.dirIndex]
-		s.dir[s.dirIndex] = absPath
+		s.prevdir[s.dirIndex] = s.Directories[s.dirIndex]
+		s.Directories[s.dirIndex] = absPath
 	} else {
-		s.prevdir[s.dirIndex] = s.dir[s.dirIndex]
-		s.dir[s.dirIndex] = path
+		s.prevdir[s.dirIndex] = s.Directories[s.dirIndex]
+		s.Directories[s.dirIndex] = path
 	}
 }
 
@@ -409,14 +406,14 @@ func (s *State) execute(cmd, path string, tty *vt.TTY) (bool, bool, error) {
 	}
 	if files.IsDir(filepath.Join(path, cmd)) { // relative path
 		newPath := filepath.Join(path, cmd)
-		if s.dir[s.dirIndex] != newPath {
+		if s.Directories[s.dirIndex] != newPath {
 			s.setPath(newPath)
 			return true, false, nil
 		}
 		return false, false, nil
 	}
 	if files.IsDir(cmd) { // absolute path
-		if s.dir[s.dirIndex] != cmd {
+		if s.Directories[s.dirIndex] != cmd {
 			s.setPath(cmd)
 			return true, false, nil
 		}
@@ -471,30 +468,30 @@ func (s *State) execute(cmd, path string, tty *vt.TTY) (bool, bool, error) {
 		rest := ""
 		if len(cmd) > 3 {
 			rest = strings.TrimSpace(cmd[3:])
-			possibleDirectory = filepath.Join(s.dir[s.dirIndex], rest)
+			possibleDirectory = filepath.Join(s.Directories[s.dirIndex], rest)
 		}
 		if possibleDirectory == "" && cmd != "-" {
 			homedir := env.HomeDir()
-			if s.dir[s.dirIndex] != homedir {
+			if s.Directories[s.dirIndex] != homedir {
 				s.setPath(homedir)
 				return true, false, nil
 			}
 			return false, false, nil
 		} else if files.IsDir(possibleDirectory) {
-			if s.dir[s.dirIndex] != possibleDirectory {
+			if s.Directories[s.dirIndex] != possibleDirectory {
 				s.setPath(possibleDirectory)
 				return true, false, nil
 			}
 			return false, false, nil
 		} else if files.IsDir(rest) {
-			if s.dir[s.dirIndex] != rest {
+			if s.Directories[s.dirIndex] != rest {
 				s.setPath(rest)
 				return true, false, nil
 			}
 			return false, false, nil
 		} else if cmd == "-" || rest == "-" {
-			if s.dir[s.dirIndex] != s.prevdir[s.dirIndex] {
-				s.prevdir[s.dirIndex], s.dir[s.dirIndex] = s.dir[s.dirIndex], s.prevdir[s.dirIndex]
+			if s.Directories[s.dirIndex] != s.prevdir[s.dirIndex] {
+				s.prevdir[s.dirIndex], s.Directories[s.dirIndex] = s.Directories[s.dirIndex], s.prevdir[s.dirIndex]
 				return true, false, nil
 			}
 			return false, false, nil
@@ -523,20 +520,20 @@ func (s *State) execute(cmd, path string, tty *vt.TTY) (bool, bool, error) {
 		fields := strings.Split(cmd, " ")
 		program := fields[0]
 		arguments := fields[1:]
-		output, err := run2(program, arguments, s.dir[s.dirIndex])
+		output, err := run2(program, arguments, s.Directories[s.dirIndex])
 		if err == nil {
 			s.drawOutput(output, tty)
 		}
 		return false, false, err
 	} else if foundExecutableInPath := files.WhichCached(cmd); foundExecutableInPath != "" {
-		return false, false, run(foundExecutableInPath, []string{}, s.dir[s.dirIndex])
+		return false, false, run(foundExecutableInPath, []string{}, s.Directories[s.dirIndex])
 	}
 
 	return false, false, fmt.Errorf("WHAT DO YOU MEAN, %s?", cmd)
 }
 
 func (s *State) currentAbsDir() string {
-	path := s.dir[s.dirIndex]
+	path := s.Directories[s.dirIndex]
 	if absPath, err := filepath.Abs(path); err == nil { // success
 		return absPath
 	}
@@ -561,19 +558,22 @@ func New(c *vt.Canvas, tty *vt.TTY, startdirs []string, startMessage, editor str
 	return &State{
 		canvas:         c,
 		tty:            tty,
-		dir:            startdirs,
 		prevdir:        startdirs,
 		dirIndex:       0,
 		quit:           false,
 		startx:         uint(5),
 		starty:         topLine + uint(4),
-		showHidden:     false,
 		fileEntries:    []FileEntry{},
 		selectedIndex:  -1,
 		selectionMoved: false,
 		filterPattern:  "",
 		editor:         editor,
-		startMessage:   startMessage,
+		ShowHidden:     false,
+		Directories:    startdirs,
+		StartMessage:   startMessage,
+		AngleColor:     vt.LightRed,
+		PromptColor:    vt.LightGreen,
+		TitleColor:     vt.LightMagenta,
 	}
 }
 
@@ -583,15 +583,15 @@ func (s *State) Run() (string, error) {
 	c := s.canvas
 	drawPrompt := func() {
 		prompt := ""
-		if absPath, err := filepath.Abs(s.dir[s.dirIndex]); err == nil { // success
+		if absPath, err := filepath.Abs(s.Directories[s.dirIndex]); err == nil { // success
 			prompt = absPath //+ "> "
 		} else {
-			prompt = s.dir[s.dirIndex] //+ "> "
+			prompt = s.Directories[s.dirIndex] //+ "> "
 		}
 		prompt = strings.Replace(prompt, env.HomeDir(), "~", 1)
-		c.Write(s.startx, s.starty, PromptColor, vt.BackgroundDefault, prompt)
+		c.Write(s.startx, s.starty, s.PromptColor, vt.BackgroundDefault, prompt)
 		s.promptLength = ulen([]rune(prompt)) + 2 // +2 for > and " "
-		c.WriteRune(s.startx+s.promptLength-2, s.starty, AngleColor, vt.BackgroundDefault, '>')
+		c.WriteRune(s.startx+s.promptLength-2, s.starty, s.AngleColor, vt.BackgroundDefault, '>')
 		c.WriteRune(s.startx+s.promptLength-1, s.starty, vt.Default, vt.BackgroundDefault, ' ')
 	}
 
@@ -624,15 +624,15 @@ func (s *State) Run() (string, error) {
 		y := topLine
 
 		// the title
-		c.Write(5, y, TitleColor, vt.BackgroundDefault, s.startMessage)
+		c.Write(5, y, s.TitleColor, vt.BackgroundDefault, s.StartMessage)
 		y++
 
 		// the directory number
-		c.Write(5, y, vt.LightYellow, vt.BackgroundDefault, fmt.Sprintf("%d [%s]", s.dirIndex, s.dir[s.dirIndex]))
+		c.Write(5, y, vt.LightYellow, vt.BackgroundDefault, fmt.Sprintf("%d [%s]", s.dirIndex, s.Directories[s.dirIndex]))
 		y++
 
 		// if files are hidden or not
-		if s.showHidden {
+		if s.ShowHidden {
 			c.Write(5, y, vt.Default, vt.BackgroundDefault, ".")
 		} else {
 			c.Write(5, y, vt.Default, vt.BackgroundDefault, " ")
@@ -652,7 +652,7 @@ func (s *State) Run() (string, error) {
 		s.selectionMoved = false // Reset selection moved flag
 		s.filterPattern = ""     // Clear filter when changing directories
 		clearAndPrepare()
-		s.ls(s.dir[s.dirIndex])
+		s.ls(s.Directories[s.dirIndex])
 		s.written = []rune{}
 		index = 0
 		clearWritten()
@@ -660,7 +660,7 @@ func (s *State) Run() (string, error) {
 	}
 
 	clearAndPrepare()
-	s.ls(s.dir[s.dirIndex])
+	s.ls(s.Directories[s.dirIndex])
 	c.Draw()
 
 	for !s.quit {
@@ -684,7 +684,7 @@ func (s *State) Run() (string, error) {
 				clearWritten()
 				c.Clear()
 				clearAndPrepare()
-				s.ls(s.dir[s.dirIndex])
+				s.ls(s.Directories[s.dirIndex])
 				c.Draw()
 			} else {
 				// Quit the program
@@ -698,9 +698,9 @@ func (s *State) Run() (string, error) {
 				s.clearHighlight()
 				selectedFile := s.fileEntries[s.selectedIndex].realName
 				savedFilename := selectedFile // Save the filename before editing
-				if changedDirectory, editedFile, err := s.execute(selectedFile, s.dir[s.dirIndex], s.tty); err != nil {
+				if changedDirectory, editedFile, err := s.execute(selectedFile, s.Directories[s.dirIndex], s.tty); err != nil {
 					clearAndPrepare()
-					s.ls(s.dir[s.dirIndex])
+					s.ls(s.Directories[s.dirIndex])
 					s.drawError(err.Error())
 					s.highlightSelection()
 				} else if changedDirectory {
@@ -719,7 +719,7 @@ func (s *State) Run() (string, error) {
 				} else {
 					// User cancelled or nothing happened, redraw screen
 					clearAndPrepare()
-					s.ls(s.dir[s.dirIndex])
+					s.ls(s.Directories[s.dirIndex])
 					// Search for the file by name
 					for i, entry := range s.fileEntries {
 						if entry.realName == savedFilename {
@@ -750,14 +750,14 @@ func (s *State) Run() (string, error) {
 			clearAndPrepare()
 			clearWritten()
 			c.Draw()
-			if changedDirectory, editedFile, err := s.execute(commandText, s.dir[s.dirIndex], s.tty); err != nil {
+			if changedDirectory, editedFile, err := s.execute(commandText, s.Directories[s.dirIndex], s.tty); err != nil {
 				s.drawError(err.Error())
 			} else if changedDirectory || editedFile {
 				listDirectory()
 			} else {
 				// Command output was shown, clear screen and redraw
 				clearAndPrepare()
-				s.ls(s.dir[s.dirIndex])
+				s.ls(s.Directories[s.dirIndex])
 			}
 			drawWritten() // for the cursor
 		case "c:11": // ctrl-k
@@ -769,12 +769,12 @@ func (s *State) Run() (string, error) {
 			s.clearHighlight()
 			s.filterPattern = string(s.written)
 			clearAndPrepare()
-			count, _ := s.ls(s.dir[s.dirIndex])
+			count, _ := s.ls(s.Directories[s.dirIndex])
 			// If no matches, redraw without filter
 			if count == 0 && s.filterPattern != "" {
 				s.filterPattern = ""
 				clearAndPrepare()
-				s.ls(s.dir[s.dirIndex])
+				s.ls(s.Directories[s.dirIndex])
 			}
 			s.selectedIndex = -1
 			clearWritten()
@@ -790,12 +790,12 @@ func (s *State) Run() (string, error) {
 			s.clearHighlight()
 			s.filterPattern = string(s.written)
 			clearAndPrepare()
-			count, _ := s.ls(s.dir[s.dirIndex])
+			count, _ := s.ls(s.Directories[s.dirIndex])
 			// If no matches, redraw without filter
 			if count == 0 && s.filterPattern != "" {
 				s.filterPattern = ""
 				clearAndPrepare()
-				s.ls(s.dir[s.dirIndex])
+				s.ls(s.Directories[s.dirIndex])
 			}
 			s.selectedIndex = -1
 			clearWritten()
@@ -959,11 +959,11 @@ func (s *State) Run() (string, error) {
 				s.highlightSelection()
 			}
 		case "c:15": // ctrl-o, toggle hidden files
-			s.showHidden = !s.showHidden
+			s.ShowHidden = !s.ShowHidden
 			listDirectory()
 		case "c:8": // ctrl-h, either toggle hidden files or delete text
 			if index == 0 {
-				s.showHidden = !s.showHidden
+				s.ShowHidden = !s.ShowHidden
 				listDirectory()
 				break
 			}
@@ -976,7 +976,7 @@ func (s *State) Run() (string, error) {
 		case "c:127": // backspace, either go one directory up or delete text
 			if index == 0 { // cursor is at the start of the line, nothing to delete
 				// go one directory up
-				if absPath, err := filepath.Abs(filepath.Join(s.dir[s.dirIndex], "..")); err == nil { // success
+				if absPath, err := filepath.Abs(filepath.Join(s.Directories[s.dirIndex], "..")); err == nil { // success
 					s.setPath(absPath)
 					listDirectory()
 				}
@@ -991,24 +991,24 @@ func (s *State) Run() (string, error) {
 			s.clearHighlight()
 			s.filterPattern = string(s.written)
 			clearAndPrepare()
-			count, _ := s.ls(s.dir[s.dirIndex])
+			count, _ := s.ls(s.Directories[s.dirIndex])
 			// If no matches, redraw without filter
 			if count == 0 && s.filterPattern != "" {
 				s.filterPattern = ""
 				clearAndPrepare()
-				s.ls(s.dir[s.dirIndex])
+				s.ls(s.Directories[s.dirIndex])
 			}
 			s.selectedIndex = -1
 			clearWritten()
 			drawWritten()
 		case "c:14": // ctrl-n : cycle directory index forward
 			s.dirIndex++
-			if s.dirIndex >= ulen(s.dir) {
+			if s.dirIndex >= ulen(s.Directories) {
 				s.dirIndex = 0
 			}
 			listDirectory()
 		case "c:0": // ctrl-space : enter the most recent directory
-			if entries, err := os.ReadDir(s.dir[s.dirIndex]); err == nil { // success
+			if entries, err := os.ReadDir(s.Directories[s.dirIndex]); err == nil { // success
 				var youngestTime time.Time
 				var youngestName string
 				for _, entry := range entries {
@@ -1024,7 +1024,7 @@ func (s *State) Run() (string, error) {
 					}
 				}
 				if youngestName != "" {
-					s.setPath(filepath.Join(s.dir[s.dirIndex], youngestName))
+					s.setPath(filepath.Join(s.Directories[s.dirIndex], youngestName))
 					listDirectory()
 				}
 			}
@@ -1090,7 +1090,7 @@ func (s *State) Run() (string, error) {
 				lastWordWrittenSoFar = fields[len(fields)-1]
 			}
 			found := false
-			if entries, err := os.ReadDir(s.dir[s.dirIndex]); err == nil { // success
+			if entries, err := os.ReadDir(s.Directories[s.dirIndex]); err == nil { // success
 				for _, entry := range entries {
 					name := entry.Name()
 					if strings.HasPrefix(name, lastWordWrittenSoFar) {
@@ -1123,21 +1123,21 @@ func (s *State) Run() (string, error) {
 			c.Clear()
 			clearAndPrepare()
 		case "c:2": // ctrl-b : go up one directory
-			if absPath, err := filepath.Abs(filepath.Join(s.dir[s.dirIndex], "..")); err == nil { // success
+			if absPath, err := filepath.Abs(filepath.Join(s.Directories[s.dirIndex], "..")); err == nil { // success
 				s.setPath(absPath)
 				listDirectory()
 			}
 		case "c:16": // ctrl-p : cycle directory index backward
 			if s.dirIndex == 0 {
-				s.dirIndex = ulen(s.dir) - 1
+				s.dirIndex = ulen(s.Directories) - 1
 			} else {
 				s.dirIndex--
 			}
 			listDirectory()
 		case "c:20": // ctrl-t : tig
-			run("tig", []string{}, s.dir[s.dirIndex])
+			run("tig", []string{}, s.Directories[s.dirIndex])
 		case "c:7": // ctrl-g : lazygit
-			run("lazygit", []string{}, s.dir[s.dirIndex])
+			run("lazygit", []string{}, s.Directories[s.dirIndex])
 		case "c:6": // ctrl-f : find in files
 			if len(s.written) == 0 {
 				break
@@ -1146,13 +1146,13 @@ func (s *State) Run() (string, error) {
 			// Search for text in non-binary files recursively
 			var foundPath string
 			var foundFile string
-			filepath.Walk(s.dir[s.dirIndex], func(path string, info os.FileInfo, err error) error {
+			filepath.Walk(s.Directories[s.dirIndex], func(path string, info os.FileInfo, err error) error {
 				if err != nil || foundPath != "" {
 					return nil
 				}
 				if info.IsDir() {
 					// Skip hidden directories unless showHidden is enabled
-					if !s.showHidden && strings.HasPrefix(info.Name(), ".") {
+					if !s.ShowHidden && strings.HasPrefix(info.Name(), ".") {
 						return filepath.SkipDir
 					}
 					return nil
@@ -1191,7 +1191,7 @@ func (s *State) Run() (string, error) {
 				}
 			}
 		//case "c:18": // ctrl-r : history search
-		//run("fzf", []string{"a", "b", "c"}, s.dir[s.dirIndex])
+		//run("fzf", []string{"a", "b", "c"}, s.Directories[s.dirIndex])
 		case "c:3": // ctrl-c
 			if len(s.written) == 0 {
 				Cleanup(c)
@@ -1202,7 +1202,7 @@ func (s *State) Run() (string, error) {
 			s.selectedIndex = -1
 			s.filterPattern = ""
 			clearAndPrepare()
-			s.ls(s.dir[s.dirIndex])
+			s.ls(s.Directories[s.dirIndex])
 			clearWritten()
 			drawWritten() // for the cursor
 		case "":
@@ -1221,12 +1221,12 @@ func (s *State) Run() (string, error) {
 			// Update filter pattern and redraw file list
 			s.filterPattern = string(s.written)
 			clearAndPrepare()
-			count, _ := s.ls(s.dir[s.dirIndex])
+			count, _ := s.ls(s.Directories[s.dirIndex])
 			// If no matches, redraw without filter
 			if count == 0 && s.filterPattern != "" {
 				s.filterPattern = ""
 				clearAndPrepare()
-				s.ls(s.dir[s.dirIndex])
+				s.ls(s.Directories[s.dirIndex])
 			}
 			clearWritten()
 			drawWritten()
