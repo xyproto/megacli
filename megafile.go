@@ -26,12 +26,13 @@ const (
 	homeKey = "⇱" // home
 	endKey  = "⇲" // end
 
-	bashDollarColor = vt.LightRed
-	angleColor      = vt.LightRed
-	promptColor     = vt.LightGreen
-	headerColor     = vt.LightMagenta
-
 	topLine = uint(1)
+)
+
+var (
+	AngleColor  = vt.LightRed
+	PromptColor = vt.LightGreen
+	TitleColor  = vt.LightMagenta
 )
 
 // FileEntry represents a file entry with position and name information
@@ -44,7 +45,8 @@ type FileEntry struct {
 
 // State holds the current state of the shell, then canvas and the directory structures
 type State struct {
-	c              *vt.Canvas
+	canvas         *vt.Canvas
+	tty            *vt.TTY
 	dir            []string
 	dirIndex       uint
 	quit           bool
@@ -59,6 +61,7 @@ type State struct {
 	selectionMoved bool
 	filterPattern  string
 	editor         string // typically $EDITOR
+	startMessage   string // title/header
 }
 
 // ErrExit is the error that is returned if the user appeared to want to exit
@@ -74,10 +77,10 @@ func (s *State) drawOutput(text string, tty *vt.TTY) {
 	y := s.starty + 1
 	for _, line := range lines {
 		vt.SetXY(x, y)
-		s.c.Write(x, y, vt.Default, vt.BackgroundDefault, strings.TrimSpace(line))
+		s.canvas.Write(x, y, vt.Default, vt.BackgroundDefault, strings.TrimSpace(line))
 		y++
 	}
-	s.c.Draw()
+	s.canvas.Draw()
 	// Wait for a key press before continuing
 	tty.String()
 }
@@ -88,7 +91,7 @@ func (s *State) drawError(text string) {
 	y := s.starty + 1
 	for _, line := range lines {
 		vt.SetXY(x, y)
-		s.c.Write(x, y, vt.Red, vt.BackgroundDefault, line)
+		s.canvas.Write(x, y, vt.Red, vt.BackgroundDefault, line)
 		y++
 	}
 }
@@ -102,7 +105,7 @@ func (s *State) highlightSelection() {
 	}
 
 	entry := s.fileEntries[s.selectedIndex]
-	s.c.Write(entry.x, entry.y, vt.Black, vt.BackgroundWhite, entry.displayName)
+	s.canvas.Write(entry.x, entry.y, vt.Black, vt.BackgroundWhite, entry.displayName)
 }
 
 func (s *State) clearHighlight() {
@@ -112,7 +115,7 @@ func (s *State) clearHighlight() {
 		// Clear only the area that was actually highlighted (displayName + suffix)
 		clearWidth := ulen(entry.displayName) + 2 // +2 for suffix and safety margin
 		for i := uint(0); i < clearWidth; i++ {
-			s.c.WriteRune(entry.x+i, entry.y, vt.Default, vt.BackgroundDefault, ' ')
+			s.canvas.WriteRune(entry.x+i, entry.y, vt.Default, vt.BackgroundDefault, ' ')
 		}
 
 		// Redraw with original colors
@@ -140,9 +143,9 @@ func (s *State) clearHighlight() {
 			suffix = ""
 		}
 
-		s.c.Write(entry.x, entry.y, color, vt.BackgroundDefault, entry.displayName)
+		s.canvas.Write(entry.x, entry.y, color, vt.BackgroundDefault, entry.displayName)
 		if suffix != "" {
-			s.c.Write(entry.x+ulen(entry.displayName), entry.y, vt.White, vt.BackgroundDefault, suffix)
+			s.canvas.Write(entry.x+ulen(entry.displayName), entry.y, vt.White, vt.BackgroundDefault, suffix)
 		}
 	}
 }
@@ -155,7 +158,7 @@ func (s *State) ls(dir string) (int, error) {
 	var (
 		x            = s.startx
 		y            = s.starty + 1
-		w            = s.c.W()
+		w            = s.canvas.W()
 		longestSoFar = uint(0)
 	)
 	entries, err := os.ReadDir(dir)
@@ -238,13 +241,13 @@ func (s *State) ls(dir string) (int, error) {
 			suffix = ""
 		}
 
-		s.c.Write(x, y, color, vt.BackgroundDefault, displayName)
+		s.canvas.Write(x, y, color, vt.BackgroundDefault, displayName)
 		if suffix != "" {
-			s.c.Write(x+ulen(displayName), y, vt.White, vt.BackgroundDefault, suffix)
+			s.canvas.Write(x+ulen(displayName), y, vt.White, vt.BackgroundDefault, suffix)
 		}
 
 		y++
-		if y >= s.c.H() {
+		if y >= s.canvas.H() {
 			x += longestSoFar + margin
 			y = s.starty + 1
 		}
@@ -262,7 +265,7 @@ func (s *State) ls(dir string) (int, error) {
 }
 
 func (s *State) confirmBinaryEdit(tty *vt.TTY, filename string) bool {
-	c := s.c
+	c := s.canvas
 	w := c.W()
 	h := c.H()
 
@@ -548,32 +551,36 @@ func Cleanup(c *vt.Canvas) {
 	vt.ShowCursor(true)
 }
 
-// MegaFile launches a file browser
+// New creates a new MegaFile State
 // c and tty is a canvas and TTY, initiated with the vt package
 // startdirs is a slice of directories to browse (toggle with tab)
 // startMessage is the string to display at the top of the screen
 // the function returns the absolute path to the directory the user ended up in,
 // and an error if something went wrong
-func MegaFile(c *vt.Canvas, tty *vt.TTY, startdirs []string, startMessage, editor string) (string, error) {
-	var (
-		x, y uint
-		s    = &State{
-			c:              c,
-			dir:            startdirs,
-			prevdir:        startdirs,
-			dirIndex:       0,
-			quit:           false,
-			startx:         uint(5),
-			starty:         topLine + uint(4),
-			showHidden:     false,
-			fileEntries:    []FileEntry{},
-			selectedIndex:  -1,
-			selectionMoved: false,
-			filterPattern:  "",
-			editor:         editor,
-		}
-	)
+func New(c *vt.Canvas, tty *vt.TTY, startdirs []string, startMessage, editor string) *State {
+	return &State{
+		canvas:         c,
+		tty:            tty,
+		dir:            startdirs,
+		prevdir:        startdirs,
+		dirIndex:       0,
+		quit:           false,
+		startx:         uint(5),
+		starty:         topLine + uint(4),
+		showHidden:     false,
+		fileEntries:    []FileEntry{},
+		selectedIndex:  -1,
+		selectionMoved: false,
+		filterPattern:  "",
+		editor:         editor,
+		startMessage:   startMessage,
+	}
+}
 
+// Run launches a file browser
+func (s *State) Run() (string, error) {
+	var x, y uint
+	c := s.canvas
 	drawPrompt := func() {
 		prompt := ""
 		if absPath, err := filepath.Abs(s.dir[s.dirIndex]); err == nil { // success
@@ -582,9 +589,9 @@ func MegaFile(c *vt.Canvas, tty *vt.TTY, startdirs []string, startMessage, edito
 			prompt = s.dir[s.dirIndex] //+ "> "
 		}
 		prompt = strings.Replace(prompt, env.HomeDir(), "~", 1)
-		c.Write(s.startx, s.starty, promptColor, vt.BackgroundDefault, prompt)
+		c.Write(s.startx, s.starty, PromptColor, vt.BackgroundDefault, prompt)
 		s.promptLength = ulen([]rune(prompt)) + 2 // +2 for > and " "
-		c.WriteRune(s.startx+s.promptLength-2, s.starty, angleColor, vt.BackgroundDefault, '>')
+		c.WriteRune(s.startx+s.promptLength-2, s.starty, AngleColor, vt.BackgroundDefault, '>')
 		c.WriteRune(s.startx+s.promptLength-1, s.starty, vt.Default, vt.BackgroundDefault, ' ')
 	}
 
@@ -616,8 +623,8 @@ func MegaFile(c *vt.Canvas, tty *vt.TTY, startdirs []string, startMessage, edito
 
 		y := topLine
 
-		// the header
-		c.Write(5, y, headerColor, vt.BackgroundDefault, startMessage)
+		// the title
+		c.Write(5, y, TitleColor, vt.BackgroundDefault, s.startMessage)
 		y++
 
 		// the directory number
@@ -657,7 +664,7 @@ func MegaFile(c *vt.Canvas, tty *vt.TTY, startdirs []string, startMessage, edito
 	c.Draw()
 
 	for !s.quit {
-		key := tty.String()
+		key := s.tty.String()
 		switch key {
 		case "c:27": // esc
 			if s.selectedIndex >= 0 {
@@ -691,7 +698,7 @@ func MegaFile(c *vt.Canvas, tty *vt.TTY, startdirs []string, startMessage, edito
 				s.clearHighlight()
 				selectedFile := s.fileEntries[s.selectedIndex].realName
 				savedFilename := selectedFile // Save the filename before editing
-				if changedDirectory, editedFile, err := s.execute(selectedFile, s.dir[s.dirIndex], tty); err != nil {
+				if changedDirectory, editedFile, err := s.execute(selectedFile, s.dir[s.dirIndex], s.tty); err != nil {
 					clearAndPrepare()
 					s.ls(s.dir[s.dirIndex])
 					s.drawError(err.Error())
@@ -743,7 +750,7 @@ func MegaFile(c *vt.Canvas, tty *vt.TTY, startdirs []string, startMessage, edito
 			clearAndPrepare()
 			clearWritten()
 			c.Draw()
-			if changedDirectory, editedFile, err := s.execute(commandText, s.dir[s.dirIndex], tty); err != nil {
+			if changedDirectory, editedFile, err := s.execute(commandText, s.dir[s.dirIndex], s.tty); err != nil {
 				s.drawError(err.Error())
 			} else if changedDirectory || editedFile {
 				listDirectory()

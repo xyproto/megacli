@@ -62,7 +62,7 @@ func main() {
 		// Use command-line argument as the first directory, if it is a directory
 		startdirs = []string{os.Args[1], env.HomeDir(), "/tmp"}
 	}
-	curdir, err := megafile.MegaFile(c, tty, startdirs, startMessage, env.StrAlt("EDITOR", "vi"))
+	curdir, err := megafile.New(c, tty, startdirs, startMessage, env.StrAlt("EDITOR", "vi")).Run()
 	if err != nil && err != megafile.ErrExit {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
