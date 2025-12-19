@@ -904,8 +904,9 @@ func (s *State) Run() (string, error) {
 				// Move to previous column (with wraparound)
 				currentEntry := s.fileEntries[s.selectedIndex]
 				currentY := currentEntry.y
-				// Find an entry with smaller x at the same y position
+
 				found := false
+				// 1. Try to find exact Y match in previous column
 				for i := s.selectedIndex - 1; i >= 0; i-- {
 					if s.fileEntries[i].y == currentY && s.fileEntries[i].x < currentEntry.x {
 						s.selectedIndex = i
@@ -913,14 +914,45 @@ func (s *State) Run() (string, error) {
 						break
 					}
 				}
-				// If not found, wrap around to the rightmost column at this y
+
+				// 2. If not found, find closest Y in previous column (or wrap to last)
 				if !found {
-					maxX := uint(0)
-					for i := 0; i < len(s.fileEntries); i++ {
-						if s.fileEntries[i].y == currentY && s.fileEntries[i].x > maxX {
-							s.selectedIndex = i
-							maxX = s.fileEntries[i].x
+					targetX := uint(0)
+					targetXFound := false
+
+					// Check if there IS a previous column
+					for i := s.selectedIndex - 1; i >= 0; i-- {
+						if s.fileEntries[i].x < currentEntry.x {
+							targetX = s.fileEntries[i].x
+							targetXFound = true
+							break
 						}
+					}
+
+					// If not found, wrap to last column
+					if !targetXFound {
+						targetX = s.fileEntries[len(s.fileEntries)-1].x
+					}
+
+					// Find closest Y in target column
+					bestIndex := -1
+					minDist := uint(10000)
+					for i := 0; i < len(s.fileEntries); i++ {
+						if s.fileEntries[i].x == targetX {
+							dist := uint(0)
+							if s.fileEntries[i].y > currentY {
+								dist = s.fileEntries[i].y - currentY
+							} else {
+								dist = currentY - s.fileEntries[i].y
+							}
+							if dist < minDist {
+								minDist = dist
+								bestIndex = i
+							}
+						}
+					}
+					if bestIndex != -1 {
+						s.selectedIndex = bestIndex
 					}
 				}
 				s.highlightSelection()
@@ -938,8 +970,9 @@ func (s *State) Run() (string, error) {
 				// Move to next column (with wraparound)
 				currentEntry := s.fileEntries[s.selectedIndex]
 				currentY := currentEntry.y
-				// Find an entry with larger x at the same y position
+
 				found := false
+				// 1. Try to find exact Y match in next column
 				for i := s.selectedIndex + 1; i < len(s.fileEntries); i++ {
 					if s.fileEntries[i].y == currentY && s.fileEntries[i].x > currentEntry.x {
 						s.selectedIndex = i
@@ -947,13 +980,45 @@ func (s *State) Run() (string, error) {
 						break
 					}
 				}
-				// If not found, wrap around to the leftmost column at this y
+
+				// 2. If not found, find closest Y in next column (or wrap to first)
 				if !found {
-					for i := 0; i < len(s.fileEntries); i++ {
-						if s.fileEntries[i].y == currentY {
-							s.selectedIndex = i
+					targetX := uint(0)
+					targetXFound := false
+
+					// Check if there IS a next column
+					for i := s.selectedIndex + 1; i < len(s.fileEntries); i++ {
+						if s.fileEntries[i].x > currentEntry.x {
+							targetX = s.fileEntries[i].x
+							targetXFound = true
 							break
 						}
+					}
+
+					// If not found, wrap to first column
+					if !targetXFound {
+						targetX = s.fileEntries[0].x
+					}
+
+					// Find closest Y in target column
+					bestIndex := -1
+					minDist := uint(10000)
+					for i := 0; i < len(s.fileEntries); i++ {
+						if s.fileEntries[i].x == targetX {
+							dist := uint(0)
+							if s.fileEntries[i].y > currentY {
+								dist = s.fileEntries[i].y - currentY
+							} else {
+								dist = currentY - s.fileEntries[i].y
+							}
+							if dist < minDist {
+								minDist = dist
+								bestIndex = i
+							}
+						}
+					}
+					if bestIndex != -1 {
+						s.selectedIndex = bestIndex
 					}
 				}
 				s.highlightSelection()
@@ -1094,7 +1159,7 @@ func (s *State) Run() (string, error) {
 				for _, entry := range entries {
 					name := entry.Name()
 					if strings.HasPrefix(name, lastWordWrittenSoFar) {
-						rest := []rune(name)[len(lastWordWrittenSoFar):]
+						rest := []rune(name)[len([]rune(lastWordWrittenSoFar)):]
 						s.written = append(s.written, rest...)
 						index += ulen(rest)
 						found = true
